@@ -4,8 +4,9 @@ Configuration for AI Assignment Desktop Application.
 
 import os
 
-# Base frontend server URL
+# Base frontend and backend server URLs
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173").rstrip("/")
+BACKEND_URL = os.getenv("BACKEND_URL", "https://intervew-backend.onrender.com").rstrip("/")
 
 # Dedicated profile directory for isolated exam session
 USER_DATA_DIR = os.path.join(os.path.expandvars(r"%TEMP%"), "HirePulseExamProfile")

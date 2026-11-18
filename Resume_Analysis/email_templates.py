@@ -14,7 +14,7 @@ SMTP_ACCOUNT = os.getenv("SMTP_USER", "")
 SMTP_CREDENTIAL = os.getenv("SMTP_PASSWORD", "").replace(" ", "")
 SENDER_DISPLAY = os.getenv("EMAILS_FROM_NAME", "AI Assessment Portal")
 CLIENT_ORIGIN = os.getenv("FRONTEND_URL", "http://localhost:5173")
-BACKEND_ORIGIN = os.getenv("BACKEND_URL", "http://localhost:8000")
+BACKEND_ORIGIN = os.getenv("BACKEND_URL", "https://intervew-backend.onrender.com")
 
 
 def notify_shortlisted_candidate(

@@ -32,10 +32,11 @@ def preconfigure_browser_profile(user_data_dir: str, frontend_url: str) -> bool:
         content_settings = profile.setdefault("content_settings", {})
         exceptions = content_settings.setdefault("exceptions", {})
 
-        # Whitelist target frontend and localhost origins
+        # Whitelist target frontend, backend, and localhost origins
         clean_url = frontend_url.rstrip("/")
         origins = [
             f"{clean_url},*",
+            "https://intervew-backend.onrender.com,*",
             "http://localhost:5173,*",
             "http://localhost:8000,*",
             "http://127.0.0.1:5173,*",

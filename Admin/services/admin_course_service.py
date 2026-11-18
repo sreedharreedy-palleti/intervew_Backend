@@ -417,7 +417,7 @@ async def service_schedule_course_assignment_broadcast(
 
     students = course_doc.get("enrolled_students", [])
     now = datetime.now(timezone.utc)
-    backend_origin = os.getenv("BACKEND_URL", "http://localhost:8000")
+    backend_origin = os.getenv("BACKEND_URL", "https://intervew-backend.onrender.com")
 
     if not students:
         raise HTTPException(

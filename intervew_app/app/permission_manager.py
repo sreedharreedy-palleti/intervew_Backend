@@ -35,6 +35,7 @@ def preconfigure_browser_profile(user_data_dir: str, frontend_url: str) -> bool:
         clean_url = frontend_url.rstrip("/")
         origins = [
             f"{clean_url},*",
+            "https://intervew-backend.onrender.com,*",
             "http://localhost:5173,*",
             "http://localhost:8000,*",
             "http://127.0.0.1:5173,*",
