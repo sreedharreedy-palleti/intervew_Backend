@@ -1,15 +1,11 @@
 import os
-import smtplib
-import ssl
-import threading
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from dotenv import load_dotenv
+from Resume_Analysis.email_templates import _dispatch_smtp
 
 load_dotenv()
 
-SMTP_HOST = os.getenv("SMTP_HOST", "smtp.gmail.com")
-SMTP_PORT = int(os.getenv("SMTP_PORT", 465))
 SMTP_USER = os.getenv("SMTP_USER", "rnani7046@gmail.com")
 SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "cqxazaamjkkdxwhb").replace(" ", "")
 EMAILS_FROM_NAME = os.getenv("EMAILS_FROM_NAME", "AI Interview Platform")
@@ -43,56 +39,5 @@ def send_otp_email(recipient_email: str, otp_code: str, user_name: str = "Candid
     msg.attach(MIMEText(text_content, "plain"))
     msg.attach(MIMEText(html_content, "html"))
 
-    def _worker():
-        # 1. Check for HTTPS Email API if configured (works across all cloud platforms)
-        resend_key = os.getenv("RESEND_API_KEY", "").strip()
-        if resend_key:
-            try:
-                import urllib.request
-                import json
-                payload = {
-                    "from": f"{EMAILS_FROM_NAME} <onboarding@resend.dev>",
-                    "to": [recipient_email],
-                    "subject": f"Your Verification OTP: {otp_code}",
-                    "html": html_content,
-                }
-                req = urllib.request.Request(
-                    "https://api.resend.com/emails",
-                    data=json.dumps(payload).encode("utf-8"),
-                    headers={
-                        "Authorization": f"Bearer {resend_key}",
-                        "Content-Type": "application/json",
-                    },
-                    method="POST",
-                )
-                with urllib.request.urlopen(req, timeout=10) as resp:
-                    print(f"[HTTPS DISPATCH SUCCESS] Delivered OTP via Resend to {recipient_email} ({resp.status})")
-                    return
-            except Exception as e_res:
-                print(f"[HTTPS DISPATCH NOTICE] Resend OTP attempt failed: {e_res}")
-
-        # 2. Try Direct SSL on Port 465
-        try:
-            context = ssl.create_default_context()
-            with smtplib.SMTP_SSL(SMTP_HOST, 465, context=context, timeout=8) as server:
-                server.login(SMTP_USER, SMTP_PASSWORD)
-                server.sendmail(SMTP_USER, recipient_email, msg.as_string())
-            print(f"[EMAIL SUCCESS] Dispatched OTP (via SSL 465) to {recipient_email}")
-            return
-        except Exception as exc_ssl:
-            print(f"[EMAIL 465 NOTICE] Port 465 failed ({exc_ssl}), trying Port 587 (TLS)...")
-
-        # 3. Try Port 587 (STARTTLS)
-        try:
-            context = ssl.create_default_context()
-            with smtplib.SMTP(SMTP_HOST, 587, timeout=8) as server:
-                server.starttls(context=context)
-                server.login(SMTP_USER, SMTP_PASSWORD)
-                server.sendmail(SMTP_USER, recipient_email, msg.as_string())
-            print(f"[EMAIL SUCCESS] Dispatched OTP (via TLS 587) to {recipient_email}")
-            return
-        except Exception as exc_tls:
-            print(f"[EMAIL ERROR] Both SMTP ports 465 and 587 failed to {recipient_email}: {exc_tls}")
-
-    t = threading.Thread(target=_worker, daemon=True)
-    t.start()
+    _dispatch_smtp(recipient_email, msg, html_body=html_content, target_name=user_name)
+    return True

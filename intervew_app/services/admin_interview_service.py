@@ -4,6 +4,7 @@ from bson import ObjectId
 from fastapi import HTTPException
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from intervew_app.schemas.admin_schemas import InterviewScheduleRequest
+from Resume_Analysis.email_templates import notify_interview_scheduled
 
 
 async def service_admin_list_interviews(db: AsyncIOMotorDatabase) -> List[Dict[str, Any]]:
@@ -57,7 +58,20 @@ async def service_admin_schedule_interview(
     )
 
     course_id = session.get("course_id")
+    candidate_email = session.get("candidate_email")
+    candidate_name = session.get("candidate_name") or "Candidate"
+    course_title = session.get("course_title") or "AI Technical Track"
+
     if course_id and ObjectId.is_valid(course_id):
+        course_doc = await db["courses"].find_one({"_id": ObjectId(course_id)})
+        if course_doc:
+            course_title = course_doc.get("title") or course_title
+            for s in course_doc.get("enrolled_students", []):
+                if s.get("interview_token") == interview_token or (session.get("user_id") and s.get("user_id") == session.get("user_id")):
+                    candidate_email = candidate_email or s.get("email")
+                    candidate_name = candidate_name or s.get("name")
+                    break
+
         await db["courses"].update_one(
             {
                 "_id": ObjectId(course_id),
@@ -71,10 +85,26 @@ async def service_admin_schedule_interview(
             }
         )
 
+    # Dispatch official interview schedule email notification
+    email_dispatched = False
+    if candidate_email:
+        try:
+            email_dispatched = notify_interview_scheduled(
+                email=candidate_email,
+                name=candidate_name,
+                course=course_title,
+                interview_datetime=payload.interview_datetime,
+                interview_token=interview_token,
+                duration_minutes=payload.duration_minutes or 45,
+            )
+        except Exception as exc:
+            print(f"[INTERVIEW SCHEDULE EMAIL ERROR] {exc}")
+
     return {
         "interview_token": interview_token,
         "scheduled_datetime": payload.interview_datetime,
         "duration_minutes": payload.duration_minutes or 45,
+        "email_sent": email_dispatched,
         "message": f"Interview successfully scheduled for {payload.interview_datetime}."
     }
 

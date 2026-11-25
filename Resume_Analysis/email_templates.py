@@ -153,7 +153,7 @@ def notify_shortlisted_candidate(
     </div>
     """
     message.attach(MIMEText(body, "html"))
-    _dispatch_smtp(email, message, html_body=body)
+    _dispatch_smtp(email, message, html_body=body, target_name=name)
 
 
 def notify_rejected_candidate(email: str, name: str, course: str, ats_score: int):
@@ -182,7 +182,7 @@ def notify_rejected_candidate(email: str, name: str, course: str, ats_score: int
     </div>
     """
     message.attach(MIMEText(body, "html"))
-    _dispatch_smtp(email, message, html_body=body)
+    _dispatch_smtp(email, message, html_body=body, target_name=name)
 
 
 def notify_assignment_scheduled(
@@ -321,17 +321,148 @@ def notify_assignment_scheduled(
     </div>
     """
     message.attach(MIMEText(body, "html"))
-    _dispatch_smtp(email, message, html_body=body)
+    _dispatch_smtp(email, message, html_body=body, target_name=name)
     return True
 
 
-def _dispatch_smtp(target_email: str, email_msg: MIMEMultipart, html_body: str = ""):
+def notify_interview_scheduled(
+    email: str,
+    name: str,
+    course: str,
+    interview_datetime: str,
+    interview_token: str,
+    duration_minutes: int = 45,
+    **kwargs,
+) -> bool:
     """
-    Dispatches email in a background daemon thread with multi-port and HTTPS fallback.
-    Prevents blocking HTTP requests and ensures delivery across cloud platforms.
+    Sends scheduled live AI technical interview routine date, time, duration,
+    proctoring guidelines, and direct access links.
+    """
+    if not SMTP_ACCOUNT or not SMTP_CREDENTIAL:
+        print("[SMTP NOTICE] Credentials missing in environment. Email bypassed.")
+        return False
+
+    c_username = email
+    interview_web_link = f"{CLIENT_ORIGIN}/interview/{interview_token}"
+    app_download_link = (
+        f"{BACKEND_ORIGIN}/api/v1/interview/download/app"
+        f"?email={quote(str(c_username))}&token={quote(str(interview_token))}&name={quote(str(name))}&course={quote(str(course))}"
+    )
+
+    message = MIMEMultipart("alternative")
+    message["Subject"] = f"Scheduled Live AI Technical Interview: {course}"
+    message["From"] = f"{SENDER_DISPLAY} <{SMTP_ACCOUNT}>"
+    message["To"] = email
+
+    body = f"""
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #0b0f19; padding: 32px 12px; color: #f3f4f6;">
+      <div style="max-width: 600px; margin: auto; background: #111827; padding: 36px 28px; border-radius: 14px; border: 1px solid rgba(255, 255, 255, 0.12); box-shadow: 0 16px 40px rgba(0,0,0,0.65);">
+        
+        <!-- Header -->
+        <div style="border-bottom: 1px solid rgba(255, 255, 255, 0.1); padding-bottom: 20px; margin-bottom: 24px;">
+          <div style="display: inline-block; background: rgba(99, 102, 241, 0.15); color: #818cf8; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; padding: 4px 10px; border-radius: 4px; margin-bottom: 10px; border: 1px solid rgba(99, 102, 241, 0.3);">
+            Official Interview Schedule
+          </div>
+          <h2 style="color: #c084fc; margin: 0 0 6px 0; font-size: 24px; font-weight: 700;">Live AI Technical Interview Routine</h2>
+          <p style="color: #9ca3af; font-size: 14px; margin: 0;">Course Track: <strong style="color: #ffffff;">{course}</strong></p>
+        </div>
+
+        <p style="font-size: 15px; color: #f3f4f6;">Dear <strong>{name}</strong>,</p>
+        <p style="color: #9ca3af; font-size: 14px; line-height: 1.6;">
+          Your live AI technical interview has been officially scheduled by the evaluation committee. Please review your session details and instructions below:
+        </p>
+
+        <!-- Scheduled Routine Card -->
+        <div style="background: rgba(139, 92, 246, 0.08); border: 1px solid rgba(139, 92, 246, 0.35); border-radius: 10px; padding: 20px; margin: 22px 0;">
+          <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
+            <tr>
+              <td style="color: #9ca3af; padding: 8px 0; width: 44%;"><strong>Scheduled Date & Time:</strong></td>
+              <td style="color: #34d399; font-weight: 700; padding: 8px 0; font-size: 15px;">{interview_datetime}</td>
+            </tr>
+            <tr>
+              <td style="color: #9ca3af; padding: 8px 0;"><strong>Estimated Duration:</strong></td>
+              <td style="color: #ffffff; font-weight: 600; padding: 8px 0;">{duration_minutes} Minutes</td>
+            </tr>
+            <tr>
+              <td style="color: #9ca3af; padding: 8px 0;"><strong>Candidate Email:</strong></td>
+              <td style="color: #ffffff; font-weight: 600; padding: 8px 0; font-family: monospace;">{c_username}</td>
+            </tr>
+            <tr>
+              <td style="color: #9ca3af; padding: 8px 0;"><strong>Session Token:</strong></td>
+              <td style="color: #c084fc; font-weight: 700; padding: 8px 0; font-family: monospace; letter-spacing: 1px;">{interview_token}</td>
+            </tr>
+          </table>
+        </div>
+
+        <!-- Launch Buttons -->
+        <div style="margin: 28px 0; text-align: center;">
+          <a href="{interview_web_link}" style="display: block; background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%); color: #ffffff; text-decoration: none; padding: 14px 28px; border-radius: 8px; font-weight: 700; font-size: 15px; margin-bottom: 12px; box-shadow: 0 4px 14px rgba(99, 102, 241, 0.4);">
+            Join Live AI Interview Room &rarr;
+          </a>
+          <a href="{app_download_link}" style="display: block; background: rgba(255, 255, 255, 0.06); color: #cbd5e1; text-decoration: none; padding: 11px 20px; border-radius: 8px; font-weight: 600; font-size: 13px; border: 1px solid rgba(255, 255, 255, 0.15);">
+            Download Desktop AI Interview Application (.exe)
+          </a>
+        </div>
+
+        <!-- Guidelines -->
+        <div style="background: rgba(0, 0, 0, 0.35); border-left: 4px solid #8b5cf6; padding: 16px; border-radius: 6px; margin: 24px 0;">
+          <h4 style="margin: 0 0 10px 0; color: #c084fc; font-size: 14px; text-transform: uppercase; letter-spacing: 0.05em;">AI Proctoring & Session Guidelines</h4>
+          <ul style="margin: 0; padding-left: 20px; font-size: 13px; color: #9ca3af; line-height: 1.6;">
+            <li style="margin-bottom: 6px;">Ensure an active webcam, microphone, and stable internet connection.</li>
+            <li style="margin-bottom: 6px;">The session is actively monitored by real-time AI face tracking and multi-speaker voice detection.</li>
+            <li style="margin-bottom: 6px;">Maintain full-screen focus throughout the interview. Tab switching is strictly logged.</li>
+            <li>Join 5 minutes prior to the scheduled start time to complete system pre-checks.</li>
+          </ul>
+        </div>
+
+        <p style="font-size: 13px; color: #6b7280; margin-top: 24px; border-top: 1px solid rgba(255, 255, 255, 0.08); padding-top: 16px; text-align: center;">
+          This is an automated administrative notification. Please do not reply directly to this email.
+        </p>
+
+      </div>
+    </div>
+    """
+    message.attach(MIMEText(body, "html"))
+    _dispatch_smtp(email, message, html_body=body, target_name=name)
+    return True
+
+
+def _dispatch_smtp(target_email: str, email_msg: MIMEMultipart, html_body: str = "", target_name: str = ""):
+    """
+    Dispatches email in a background daemon thread with Brevo HTTPS, Resend HTTPS,
+    Direct SSL 465, and TLS 587 fallbacks.
+    Prevents blocking HTTP requests and ensures delivery across all cloud platforms.
     """
     def _worker():
-        # 1. Check for HTTPS Email API (bypasses cloud SMTP blocks completely on port 443)
+        # 1. Check for Brevo HTTPS Email API (Works on Render Port 443 with 0 port blocks)
+        brevo_key = os.getenv("BREVO_API_KEY", "").strip()
+        if brevo_key:
+            try:
+                import urllib.request
+                import json
+                payload = {
+                    "sender": {"name": SENDER_DISPLAY, "email": SMTP_ACCOUNT},
+                    "to": [{"email": target_email, "name": target_name or target_email}],
+                    "subject": str(email_msg["Subject"]),
+                    "htmlContent": html_body or email_msg.as_string(),
+                }
+                req = urllib.request.Request(
+                    "https://api.brevo.com/v3/smtp/email",
+                    data=json.dumps(payload).encode("utf-8"),
+                    headers={
+                        "api-key": brevo_key,
+                        "Content-Type": "application/json",
+                        "Accept": "application/json",
+                    },
+                    method="POST",
+                )
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    print(f"[HTTPS BREVO SUCCESS] Delivered email to {target_email} ({resp.status})")
+                    return
+            except Exception as e_brevo:
+                print(f"[HTTPS BREVO NOTICE] Brevo attempt failed: {e_brevo}")
+
+        # 2. Check for Resend HTTPS Email API (Port 443)
         resend_key = os.getenv("RESEND_API_KEY", "").strip()
         if resend_key:
             try:
@@ -353,12 +484,12 @@ def _dispatch_smtp(target_email: str, email_msg: MIMEMultipart, html_body: str =
                     method="POST",
                 )
                 with urllib.request.urlopen(req, timeout=10) as resp:
-                    print(f"[HTTPS DISPATCH SUCCESS] Delivered email via Resend to {target_email} ({resp.status})")
+                    print(f"[HTTPS RESEND SUCCESS] Delivered email via Resend to {target_email} ({resp.status})")
                     return
             except Exception as e_resend:
-                print(f"[HTTPS DISPATCH NOTICE] Resend API attempt failed: {e_resend}")
+                print(f"[HTTPS RESEND NOTICE] Resend API attempt failed: {e_resend}")
 
-        # 2. Try Direct SSL on Port 465 (Fast, secure connection)
+        # 3. Try Direct SSL on Port 465 (Gmail SMTP standard SSL)
         try:
             ctx = ssl.create_default_context()
             with smtplib.SMTP_SSL(SMTP_SERVER, 465, context=ctx, timeout=8) as server:
@@ -369,7 +500,7 @@ def _dispatch_smtp(target_email: str, email_msg: MIMEMultipart, html_body: str =
         except Exception as exc_ssl:
             print(f"[SMTP 465 NOTICE] Port 465 failed ({exc_ssl}), trying Port 587 (TLS)...")
 
-        # 3. Try Port 587 with STARTTLS
+        # 4. Try Port 587 with STARTTLS
         try:
             ctx = ssl.create_default_context()
             with smtplib.SMTP(SMTP_SERVER, 587, timeout=8) as server:
@@ -379,8 +510,8 @@ def _dispatch_smtp(target_email: str, email_msg: MIMEMultipart, html_body: str =
             print(f"[SMTP DISPATCH SUCCESS] Delivered email (via TLS 587) to {target_email}")
             return
         except Exception as exc_tls:
-            print(f"[SMTP DISPATCH ERROR] All SMTP ports (465 & 587) failed to {target_email}: {exc_tls}")
-            print(f"[SMTP CLOUD NOTE] Free-tier cloud platforms like Render block raw outbound SMTP ports 25, 465, 587. Consider deploying on Railway, Fly.io, VPS, or adding RESEND_API_KEY.")
+            print(f"[SMTP DISPATCH ERROR] All delivery methods failed to {target_email}: {exc_tls}")
+            print(f"[SMTP CLOUD NOTE] Free-tier cloud platforms like Render block raw outbound SMTP ports 25, 465, 587. To fix: Add BREVO_API_KEY or RESEND_API_KEY to Render Environment Variables, or deploy on Railway/Fly.io.")
 
     t = threading.Thread(target=_worker, daemon=True)
     t.start()
