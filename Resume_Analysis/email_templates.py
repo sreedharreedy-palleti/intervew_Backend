@@ -10,10 +10,10 @@ from dotenv import load_dotenv
 load_dotenv()
 
 SMTP_SERVER = os.getenv("SMTP_HOST", "smtp.gmail.com")
-SMTP_PORT = int(os.getenv("SMTP_PORT", 465))
+SMTP_PORT = int(os.getenv("SMTP_PORT", 587))
 SMTP_ACCOUNT = os.getenv("SMTP_USER", "rnani7046@gmail.com")
-SMTP_CREDENTIAL = os.getenv("SMTP_PASSWORD", "cqxazaamjkkdxwhb").replace(" ", "")
-SENDER_DISPLAY = os.getenv("EMAILS_FROM_NAME", "AI Assessment Portal")
+SMTP_CREDENTIAL = os.getenv("SMTP_PASSWORD", "cqxa zaam jkkd xwhb").replace(" ", "")
+SENDER_DISPLAY = os.getenv("EMAILS_FROM_NAME", "AI Interview Platform")
 CLIENT_ORIGIN = os.getenv("FRONTEND_URL", "http://localhost:5173")
 BACKEND_ORIGIN = os.getenv("BACKEND_URL", "https://intervew-backend.onrender.com")
 
@@ -429,14 +429,36 @@ def notify_interview_scheduled(
 
 def _dispatch_smtp(target_email: str, email_msg: MIMEMultipart, html_body: str = "", target_name: str = ""):
     """
-    Dispatches email in a background daemon thread with Brevo HTTPS, SendGrid HTTPS,
-    Resend HTTPS, Direct SSL 465, and TLS 587 fallbacks.
-    Ensures delivery to ANY candidate email across cloud platforms.
+    Dispatches email via official Gmail SMTP (Port 587 STARTTLS / Port 465 SSL),
+    with HTTPS fallback for cloud hosts that block raw SMTP ports.
     """
     clean_target = target_email.strip()
 
     def _worker():
-        # 1. Check for Brevo HTTPS Email API (Allows sending to ANY candidate email worldwide on Port 443)
+        # 1. Primary: Direct Gmail SMTP on Port 587 (STARTTLS)
+        try:
+            ctx = ssl.create_default_context()
+            with smtplib.SMTP(SMTP_SERVER, 587, timeout=10) as server:
+                server.starttls(context=ctx)
+                server.login(SMTP_ACCOUNT, SMTP_CREDENTIAL)
+                server.sendmail(SMTP_ACCOUNT, [clean_target], email_msg.as_string())
+            print(f"[SMTP DISPATCH SUCCESS] Delivered email via Gmail TLS 587 to {clean_target}")
+            return
+        except Exception as exc_tls:
+            print(f"[SMTP 587 NOTICE] Port 587 failed to {clean_target} ({exc_tls}), trying Port 465 (SSL)...")
+
+        # 2. Secondary: Direct Gmail SMTP on Port 465 (Direct SSL)
+        try:
+            ctx = ssl.create_default_context()
+            with smtplib.SMTP_SSL(SMTP_SERVER, 465, context=ctx, timeout=10) as server:
+                server.login(SMTP_ACCOUNT, SMTP_CREDENTIAL)
+                server.sendmail(SMTP_ACCOUNT, [clean_target], email_msg.as_string())
+            print(f"[SMTP DISPATCH SUCCESS] Delivered email via Gmail SSL 465 to {clean_target}")
+            return
+        except Exception as exc_ssl:
+            print(f"[SMTP 465 NOTICE] Port 465 failed to {clean_target} ({exc_ssl}). Trying HTTPS cloud fallback...")
+
+        # 3. Cloud Fallback: Brevo HTTPS (Port 443 - works on Render for all candidate emails)
         brevo_key = os.getenv("BREVO_API_KEY", "").strip()
         if brevo_key:
             try:
@@ -460,39 +482,12 @@ def _dispatch_smtp(target_email: str, email_msg: MIMEMultipart, html_body: str =
                     method="POST",
                 )
                 with urllib.request.urlopen(req, timeout=10) as resp:
-                    print(f"[HTTPS BREVO SUCCESS] Delivered email to {clean_target} ({resp.status})")
+                    print(f"[HTTPS BREVO SUCCESS] Delivered email via Brevo to {clean_target} ({resp.status})")
                     return
             except Exception as e_brevo:
-                print(f"[HTTPS BREVO NOTICE] Brevo attempt failed: {e_brevo}")
+                print(f"[HTTPS BREVO ERROR] Brevo attempt failed: {e_brevo}")
 
-        # 2. Check for SendGrid HTTPS Email API (Port 443)
-        sendgrid_key = os.getenv("SENDGRID_API_KEY", "").strip()
-        if sendgrid_key:
-            try:
-                import urllib.request
-                import json
-                sg_payload = {
-                    "personalizations": [{"to": [{"email": clean_target}]}],
-                    "from": {"email": SMTP_ACCOUNT, "name": SENDER_DISPLAY},
-                    "subject": str(email_msg["Subject"]),
-                    "content": [{"type": "text/html", "value": html_body or email_msg.as_string()}],
-                }
-                req = urllib.request.Request(
-                    "https://api.sendgrid.com/v3/mail/send",
-                    data=json.dumps(sg_payload).encode("utf-8"),
-                    headers={
-                        "Authorization": f"Bearer {sendgrid_key}",
-                        "Content-Type": "application/json",
-                    },
-                    method="POST",
-                )
-                with urllib.request.urlopen(req, timeout=10) as resp:
-                    print(f"[HTTPS SENDGRID SUCCESS] Delivered email to {clean_target} ({resp.status})")
-                    return
-            except Exception as e_sg:
-                print(f"[HTTPS SENDGRID NOTICE] SendGrid attempt failed: {e_sg}")
-
-        # 3. Check for Resend HTTPS Email API (Port 443)
+        # 4. Cloud Fallback: Resend HTTPS (Port 443)
         resend_key = os.getenv("RESEND_API_KEY", "").strip()
         if resend_key:
             try:
@@ -518,33 +513,10 @@ def _dispatch_smtp(target_email: str, email_msg: MIMEMultipart, html_body: str =
                     print(f"[HTTPS RESEND SUCCESS] Delivered email via Resend to {clean_target} ({resp.status})")
                     return
             except Exception as e_resend:
-                print(f"[HTTPS RESEND NOTICE] Resend API attempt failed for {clean_target}: {e_resend}")
-                if "403" in str(e_resend) or "only send testing" in str(e_resend).lower():
-                    print("[RESEND NOTE] Resend default onboarding@resend.dev only allows sending to the account owner. For all candidate emails, use Brevo (BREVO_API_KEY) or verify a domain on Resend.")
+                print(f"[HTTPS RESEND ERROR] Resend attempt failed: {e_resend}")
 
-        # 4. Try Direct SSL on Port 465 (Gmail SMTP standard SSL)
-        try:
-            ctx = ssl.create_default_context()
-            with smtplib.SMTP_SSL(SMTP_SERVER, 465, context=ctx, timeout=8) as server:
-                server.login(SMTP_ACCOUNT, SMTP_CREDENTIAL)
-                server.sendmail(SMTP_ACCOUNT, [clean_target], email_msg.as_string())
-            print(f"[SMTP DISPATCH SUCCESS] Delivered email (via SSL 465) to {clean_target}")
-            return
-        except Exception as exc_ssl:
-            print(f"[SMTP 465 NOTICE] Port 465 failed to {clean_target} ({exc_ssl}), trying Port 587 (TLS)...")
-
-        # 5. Try Port 587 with STARTTLS
-        try:
-            ctx = ssl.create_default_context()
-            with smtplib.SMTP(SMTP_SERVER, 587, timeout=8) as server:
-                server.starttls(context=ctx)
-                server.login(SMTP_ACCOUNT, SMTP_CREDENTIAL)
-                server.sendmail(SMTP_ACCOUNT, [clean_target], email_msg.as_string())
-            print(f"[SMTP DISPATCH SUCCESS] Delivered email (via TLS 587) to {clean_target}")
-            return
-        except Exception as exc_tls:
-            print(f"[SMTP DISPATCH ERROR] All delivery methods failed to {clean_target}: {exc_tls}")
-            print(f"[SMTP CLOUD NOTE] Free-tier cloud platforms like Render block raw outbound SMTP ports 25, 465, 587. To send to all candidate emails from Render, add BREVO_API_KEY (free 300/day to ANY email), or deploy on Railway/Fly.io.")
+        print(f"[SMTP DISPATCH ERROR] All email delivery methods failed for recipient {clean_target}.")
+        print("[SMTP CLOUD NOTE] Free-tier cloud platforms like Render block raw outbound SMTP ports 587 & 465 ([Errno 101] Network is unreachable). Deploying on Railway.app, Fly.io, or VPS allows direct Gmail SMTP to send natively without blocks.")
 
     t = threading.Thread(target=_worker, daemon=False)
     t.start()
