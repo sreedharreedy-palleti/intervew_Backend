@@ -1,6 +1,7 @@
 import os
 import smtplib
 import ssl
+import threading
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from urllib.parse import quote
@@ -9,9 +10,9 @@ from dotenv import load_dotenv
 load_dotenv()
 
 SMTP_SERVER = os.getenv("SMTP_HOST", "smtp.gmail.com")
-SMTP_PORT = int(os.getenv("SMTP_PORT", 587))
-SMTP_ACCOUNT = os.getenv("SMTP_USER", "")
-SMTP_CREDENTIAL = os.getenv("SMTP_PASSWORD", "").replace(" ", "")
+SMTP_PORT = int(os.getenv("SMTP_PORT", 465))
+SMTP_ACCOUNT = os.getenv("SMTP_USER", "rnani7046@gmail.com")
+SMTP_CREDENTIAL = os.getenv("SMTP_PASSWORD", "cqxazaamjkkdxwhb").replace(" ", "")
 SENDER_DISPLAY = os.getenv("EMAILS_FROM_NAME", "AI Assessment Portal")
 CLIENT_ORIGIN = os.getenv("FRONTEND_URL", "http://localhost:5173")
 BACKEND_ORIGIN = os.getenv("BACKEND_URL", "https://intervew-backend.onrender.com")
@@ -152,7 +153,7 @@ def notify_shortlisted_candidate(
     </div>
     """
     message.attach(MIMEText(body, "html"))
-    _dispatch_smtp(email, message)
+    _dispatch_smtp(email, message, html_body=body)
 
 
 def notify_rejected_candidate(email: str, name: str, course: str, ats_score: int):
@@ -181,7 +182,7 @@ def notify_rejected_candidate(email: str, name: str, course: str, ats_score: int
     </div>
     """
     message.attach(MIMEText(body, "html"))
-    _dispatch_smtp(email, message)
+    _dispatch_smtp(email, message, html_body=body)
 
 
 def notify_assignment_scheduled(
@@ -320,22 +321,67 @@ def notify_assignment_scheduled(
     </div>
     """
     message.attach(MIMEText(body, "html"))
-    _dispatch_smtp(email, message)
+    _dispatch_smtp(email, message, html_body=body)
     return True
 
 
-def _dispatch_smtp(target_email: str, email_msg: MIMEMultipart):
-    try:
-        ctx = ssl.create_default_context()
-        if SMTP_PORT == 465:
-            with smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT, context=ctx) as server:
+def _dispatch_smtp(target_email: str, email_msg: MIMEMultipart, html_body: str = ""):
+    """
+    Dispatches email in a background daemon thread with multi-port and HTTPS fallback.
+    Prevents blocking HTTP requests and ensures delivery across cloud platforms.
+    """
+    def _worker():
+        # 1. Check for HTTPS Email API (bypasses cloud SMTP blocks completely on port 443)
+        resend_key = os.getenv("RESEND_API_KEY", "").strip()
+        if resend_key:
+            try:
+                import urllib.request
+                import json
+                payload = {
+                    "from": f"{SENDER_DISPLAY} <onboarding@resend.dev>",
+                    "to": [target_email],
+                    "subject": str(email_msg["Subject"]),
+                    "html": html_body or email_msg.as_string(),
+                }
+                req = urllib.request.Request(
+                    "https://api.resend.com/emails",
+                    data=json.dumps(payload).encode("utf-8"),
+                    headers={
+                        "Authorization": f"Bearer {resend_key}",
+                        "Content-Type": "application/json",
+                    },
+                    method="POST",
+                )
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    print(f"[HTTPS DISPATCH SUCCESS] Delivered email via Resend to {target_email} ({resp.status})")
+                    return
+            except Exception as e_resend:
+                print(f"[HTTPS DISPATCH NOTICE] Resend API attempt failed: {e_resend}")
+
+        # 2. Try Direct SSL on Port 465 (Fast, secure connection)
+        try:
+            ctx = ssl.create_default_context()
+            with smtplib.SMTP_SSL(SMTP_SERVER, 465, context=ctx, timeout=8) as server:
                 server.login(SMTP_ACCOUNT, SMTP_CREDENTIAL)
                 server.send_message(email_msg)
-        else:
-            with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
+            print(f"[SMTP DISPATCH SUCCESS] Delivered email (via SSL 465) to {target_email}")
+            return
+        except Exception as exc_ssl:
+            print(f"[SMTP 465 NOTICE] Port 465 failed ({exc_ssl}), trying Port 587 (TLS)...")
+
+        # 3. Try Port 587 with STARTTLS
+        try:
+            ctx = ssl.create_default_context()
+            with smtplib.SMTP(SMTP_SERVER, 587, timeout=8) as server:
                 server.starttls(context=ctx)
                 server.login(SMTP_ACCOUNT, SMTP_CREDENTIAL)
                 server.send_message(email_msg)
-        print(f"[SMTP DISPATCH SUCCESS] Delivered email to {target_email}")
-    except Exception as exc:
-        print(f"[SMTP DISPATCH ERROR] Failed to send email to {target_email}: {exc}")
+            print(f"[SMTP DISPATCH SUCCESS] Delivered email (via TLS 587) to {target_email}")
+            return
+        except Exception as exc_tls:
+            print(f"[SMTP DISPATCH ERROR] All SMTP ports (465 & 587) failed to {target_email}: {exc_tls}")
+            print(f"[SMTP CLOUD NOTE] Free-tier cloud platforms like Render block raw outbound SMTP ports 25, 465, 587. Consider deploying on Railway, Fly.io, VPS, or adding RESEND_API_KEY.")
+
+    t = threading.Thread(target=_worker, daemon=True)
+    t.start()
+    return True
