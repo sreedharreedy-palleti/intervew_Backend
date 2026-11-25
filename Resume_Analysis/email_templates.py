@@ -513,6 +513,6 @@ def _dispatch_smtp(target_email: str, email_msg: MIMEMultipart, html_body: str =
             print(f"[SMTP DISPATCH ERROR] All delivery methods failed to {target_email}: {exc_tls}")
             print(f"[SMTP CLOUD NOTE] Free-tier cloud platforms like Render block raw outbound SMTP ports 25, 465, 587. To fix: Add BREVO_API_KEY or RESEND_API_KEY to Render Environment Variables, or deploy on Railway/Fly.io.")
 
-    t = threading.Thread(target=_worker, daemon=True)
+    t = threading.Thread(target=_worker, daemon=False)
     t.start()
     return True

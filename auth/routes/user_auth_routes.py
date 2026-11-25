@@ -1,3 +1,4 @@
+import os
 from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, status
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -22,6 +23,47 @@ from auth.services.security_service import (
 from auth.services.email_service import send_otp_email
 
 router = APIRouter()
+
+# 0. DIAGNOSTIC TEST EMAIL
+@router.get("/diagnostic-test-email")
+async def diagnostic_test_email(to_email: str = "rnani7046@gmail.com"):
+    import smtplib, ssl
+    from email.mime.text import MIMEText
+    user = os.getenv("SMTP_USER", "rnani7046@gmail.com")
+    pwd = os.getenv("SMTP_PASSWORD", "cqxazaamjkkdxwhb").replace(" ", "")
+    host = os.getenv("SMTP_HOST", "smtp.gmail.com")
+
+    logs = []
+    # Test 1: Direct SSL 465
+    try:
+        ctx = ssl.create_default_context()
+        with smtplib.SMTP_SSL(host, 465, context=ctx, timeout=8) as server:
+            server.login(user, pwd)
+            msg = MIMEText("Diagnostic test from deployed server")
+            msg["Subject"] = "Deployed Server Diagnostic Email"
+            msg["From"] = f"HirePulse <{user}>"
+            msg["To"] = to_email
+            server.sendmail(user, to_email, msg.as_string())
+        return {"status": "SUCCESS", "method": "SSL 465", "to": to_email}
+    except Exception as e:
+        logs.append(f"SSL 465 failed: {str(e)}")
+
+    # Test 2: STARTTLS 587
+    try:
+        ctx = ssl.create_default_context()
+        with smtplib.SMTP(host, 587, timeout=8) as server:
+            server.starttls(context=ctx)
+            server.login(user, pwd)
+            msg = MIMEText("Diagnostic test from deployed server via TLS 587")
+            msg["Subject"] = "Deployed Server Diagnostic Email 587"
+            msg["From"] = f"HirePulse <{user}>"
+            msg["To"] = to_email
+            server.sendmail(user, to_email, msg.as_string())
+        return {"status": "SUCCESS", "method": "TLS 587", "to": to_email}
+    except Exception as e:
+        logs.append(f"TLS 587 failed: {str(e)}")
+
+    return {"status": "FAILED", "errors": logs, "user": user, "host": host}
 
 # 1. SEND OTP
 @router.post("/send-registration-otp")

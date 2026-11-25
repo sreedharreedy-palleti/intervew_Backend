@@ -209,6 +209,37 @@ async def service_update_assignment_interview_decision(
             }
         )
 
+    # Dispatch email notification if candidate is shortlisted for interview round
+    if is_shortlisted:
+        target_email = None
+        target_name = "Candidate"
+        course_name = "AI Technical Track"
+        if assignment_token:
+            a_doc = await db["assignments"].find_one({"assignment_token": assignment_token})
+            if a_doc:
+                target_email = a_doc.get("candidate_email")
+                target_name = a_doc.get("candidate_name") or target_name
+                course_name = a_doc.get("course_title") or course_name
+        elif user_id and ObjectId.is_valid(user_id):
+            u_doc = await db["users"].find_one({"_id": ObjectId(user_id)})
+            if u_doc:
+                target_email = u_doc.get("email")
+                target_name = u_doc.get("name") or target_name
+
+        if target_email:
+            try:
+                from Resume_Analysis.email_templates import notify_interview_scheduled
+                notify_interview_scheduled(
+                    email=target_email,
+                    name=target_name,
+                    course=course_name,
+                    interview_datetime="Admissions Schedule Active · Check Candidate Portal",
+                    interview_token=assignment_token or "ACTIVE-SESSION",
+                    duration_minutes=45,
+                )
+            except Exception as e:
+                print(f"[INTERVIEW SHORTLIST NOTIFICATION ERROR] {e}")
+
     return {
         "success": True,
         "decision": "shortlisted" if is_shortlisted else "not_shortlisted",
