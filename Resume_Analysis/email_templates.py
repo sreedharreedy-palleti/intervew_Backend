@@ -429,20 +429,23 @@ def notify_interview_scheduled(
 
 def _dispatch_smtp(target_email: str, email_msg: MIMEMultipart, html_body: str = "", target_name: str = ""):
     """
-    Dispatches email in a background daemon thread with Brevo HTTPS, Resend HTTPS,
-    Direct SSL 465, and TLS 587 fallbacks.
-    Prevents blocking HTTP requests and ensures delivery across all cloud platforms.
+    Dispatches email in a background daemon thread with Brevo HTTPS, SendGrid HTTPS,
+    Resend HTTPS, Direct SSL 465, and TLS 587 fallbacks.
+    Ensures delivery to ANY candidate email across cloud platforms.
     """
+    clean_target = target_email.strip()
+
     def _worker():
-        # 1. Check for Brevo HTTPS Email API (Works on Render Port 443 with 0 port blocks)
+        # 1. Check for Brevo HTTPS Email API (Allows sending to ANY candidate email worldwide on Port 443)
         brevo_key = os.getenv("BREVO_API_KEY", "").strip()
         if brevo_key:
             try:
                 import urllib.request
                 import json
+                brevo_sender = os.getenv("BREVO_SENDER_EMAIL", SMTP_ACCOUNT).strip()
                 payload = {
-                    "sender": {"name": SENDER_DISPLAY, "email": SMTP_ACCOUNT},
-                    "to": [{"email": target_email, "name": target_name or target_email}],
+                    "sender": {"name": SENDER_DISPLAY, "email": brevo_sender},
+                    "to": [{"email": clean_target, "name": target_name or clean_target}],
                     "subject": str(email_msg["Subject"]),
                     "htmlContent": html_body or email_msg.as_string(),
                 }
@@ -457,20 +460,48 @@ def _dispatch_smtp(target_email: str, email_msg: MIMEMultipart, html_body: str =
                     method="POST",
                 )
                 with urllib.request.urlopen(req, timeout=10) as resp:
-                    print(f"[HTTPS BREVO SUCCESS] Delivered email to {target_email} ({resp.status})")
+                    print(f"[HTTPS BREVO SUCCESS] Delivered email to {clean_target} ({resp.status})")
                     return
             except Exception as e_brevo:
                 print(f"[HTTPS BREVO NOTICE] Brevo attempt failed: {e_brevo}")
 
-        # 2. Check for Resend HTTPS Email API (Port 443)
+        # 2. Check for SendGrid HTTPS Email API (Port 443)
+        sendgrid_key = os.getenv("SENDGRID_API_KEY", "").strip()
+        if sendgrid_key:
+            try:
+                import urllib.request
+                import json
+                sg_payload = {
+                    "personalizations": [{"to": [{"email": clean_target}]}],
+                    "from": {"email": SMTP_ACCOUNT, "name": SENDER_DISPLAY},
+                    "subject": str(email_msg["Subject"]),
+                    "content": [{"type": "text/html", "value": html_body or email_msg.as_string()}],
+                }
+                req = urllib.request.Request(
+                    "https://api.sendgrid.com/v3/mail/send",
+                    data=json.dumps(sg_payload).encode("utf-8"),
+                    headers={
+                        "Authorization": f"Bearer {sendgrid_key}",
+                        "Content-Type": "application/json",
+                    },
+                    method="POST",
+                )
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    print(f"[HTTPS SENDGRID SUCCESS] Delivered email to {clean_target} ({resp.status})")
+                    return
+            except Exception as e_sg:
+                print(f"[HTTPS SENDGRID NOTICE] SendGrid attempt failed: {e_sg}")
+
+        # 3. Check for Resend HTTPS Email API (Port 443)
         resend_key = os.getenv("RESEND_API_KEY", "").strip()
         if resend_key:
             try:
                 import urllib.request
                 import json
+                from_sender = os.getenv("RESEND_FROM_EMAIL", f"{SENDER_DISPLAY} <onboarding@resend.dev>").strip()
                 payload = {
-                    "from": f"{SENDER_DISPLAY} <onboarding@resend.dev>",
-                    "to": [target_email],
+                    "from": from_sender,
+                    "to": [clean_target],
                     "subject": str(email_msg["Subject"]),
                     "html": html_body or email_msg.as_string(),
                 }
@@ -484,34 +515,36 @@ def _dispatch_smtp(target_email: str, email_msg: MIMEMultipart, html_body: str =
                     method="POST",
                 )
                 with urllib.request.urlopen(req, timeout=10) as resp:
-                    print(f"[HTTPS RESEND SUCCESS] Delivered email via Resend to {target_email} ({resp.status})")
+                    print(f"[HTTPS RESEND SUCCESS] Delivered email via Resend to {clean_target} ({resp.status})")
                     return
             except Exception as e_resend:
-                print(f"[HTTPS RESEND NOTICE] Resend API attempt failed: {e_resend}")
+                print(f"[HTTPS RESEND NOTICE] Resend API attempt failed for {clean_target}: {e_resend}")
+                if "403" in str(e_resend) or "only send testing" in str(e_resend).lower():
+                    print("[RESEND NOTE] Resend default onboarding@resend.dev only allows sending to the account owner. For all candidate emails, use Brevo (BREVO_API_KEY) or verify a domain on Resend.")
 
-        # 3. Try Direct SSL on Port 465 (Gmail SMTP standard SSL)
+        # 4. Try Direct SSL on Port 465 (Gmail SMTP standard SSL)
         try:
             ctx = ssl.create_default_context()
             with smtplib.SMTP_SSL(SMTP_SERVER, 465, context=ctx, timeout=8) as server:
                 server.login(SMTP_ACCOUNT, SMTP_CREDENTIAL)
-                server.send_message(email_msg)
-            print(f"[SMTP DISPATCH SUCCESS] Delivered email (via SSL 465) to {target_email}")
+                server.sendmail(SMTP_ACCOUNT, [clean_target], email_msg.as_string())
+            print(f"[SMTP DISPATCH SUCCESS] Delivered email (via SSL 465) to {clean_target}")
             return
         except Exception as exc_ssl:
-            print(f"[SMTP 465 NOTICE] Port 465 failed ({exc_ssl}), trying Port 587 (TLS)...")
+            print(f"[SMTP 465 NOTICE] Port 465 failed to {clean_target} ({exc_ssl}), trying Port 587 (TLS)...")
 
-        # 4. Try Port 587 with STARTTLS
+        # 5. Try Port 587 with STARTTLS
         try:
             ctx = ssl.create_default_context()
             with smtplib.SMTP(SMTP_SERVER, 587, timeout=8) as server:
                 server.starttls(context=ctx)
                 server.login(SMTP_ACCOUNT, SMTP_CREDENTIAL)
-                server.send_message(email_msg)
-            print(f"[SMTP DISPATCH SUCCESS] Delivered email (via TLS 587) to {target_email}")
+                server.sendmail(SMTP_ACCOUNT, [clean_target], email_msg.as_string())
+            print(f"[SMTP DISPATCH SUCCESS] Delivered email (via TLS 587) to {clean_target}")
             return
         except Exception as exc_tls:
-            print(f"[SMTP DISPATCH ERROR] All delivery methods failed to {target_email}: {exc_tls}")
-            print(f"[SMTP CLOUD NOTE] Free-tier cloud platforms like Render block raw outbound SMTP ports 25, 465, 587. To fix: Add BREVO_API_KEY or RESEND_API_KEY to Render Environment Variables, or deploy on Railway/Fly.io.")
+            print(f"[SMTP DISPATCH ERROR] All delivery methods failed to {clean_target}: {exc_tls}")
+            print(f"[SMTP CLOUD NOTE] Free-tier cloud platforms like Render block raw outbound SMTP ports 25, 465, 587. To send to all candidate emails from Render, add BREVO_API_KEY (free 300/day to ANY email), or deploy on Railway/Fly.io.")
 
     t = threading.Thread(target=_worker, daemon=False)
     t.start()
